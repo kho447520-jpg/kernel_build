@@ -1,8 +1,6 @@
-name: Build MikaKernel
-
+name: Build Rissu Kernel A10s
 on:
   workflow_dispatch:
-
 jobs:
   build-kernel:
     runs-on: ubuntu-22.04
@@ -14,7 +12,6 @@ jobs:
           echo "KERNEL_SOURCE=$(cat config.env | grep -w "KERNEL_SOURCE" | head -n 1 | cut -d "=" -f 2)" >> $GITHUB_ENV
           echo "KERNEL_SOURCE_BRANCH=$(cat config.env | grep -w "KERNEL_SOURCE_BRANCH" | head -n 1 | cut -d "=" -f 2)" >> $GITHUB_ENV
           echo "KERNEL_CONFIG=$(cat config.env | grep -w "KERNEL_CONFIG" | head -n 1 | cut -d "=" -f 2)" >> $GITHUB_ENV
-          echo "BUILD_ARGS=$(cat config.env | grep -w "BUILD_ARGS" | head -n 1 | cut -d ":" -f 2)" >> $GITHUB_ENV
 
       - name: Pull Clang r416183b
         run: |
@@ -35,6 +32,45 @@ jobs:
       - name: Fix kernel warnings
         run: |
           cd kernel-source
+          sed -i '/CONFIG_CC_STACKPROTECTOR_STRONG/d' kernel/arch/arm64/configs/${{ env.KERNEL_CONFIG }}
+          sed -i '/CONFIG_CC_STACKPROTECTOR/d' kernel/arch/arm64/configs/${{ env.KERNEL_CONFIG }}
+          echo "CONFIG_CC_STACKPROTECTOR_NONE=y" >> kernel/arch/arm64/configs/${{ env.KERNEL_CONFIG }}
+          sed -i 's/-Werror//g' Makefile
+          find scripts -name "Makefile*" -exec sed -i 's/-Werror//g' {} + 2>/dev/null || true
+
+      - name: Build kernel
+        run: |
+          export KBUILD_BUILD_USER="zclkkk"
+          export KBUILD_BUILD_HOST="workspace"
+          export PATH=$GITHUB_WORKSPACE/clang/bin:$GITHUB_WORKSPACE/gcc/bin:$PATH
+          cd kernel-source
+          make O=out ARCH=arm64 \
+            CC=$GITHUB_WORKSPACE/clang/bin/clang \
+            CLANG_TRIPLE=aarch64-linux-gnu- \
+            CROSS_COMPILE=$GITHUB_WORKSPACE/gcc/bin/aarch64-linux-android- \
+            CONFIG_LTO_NONE=y \
+            ${{ env.KERNEL_CONFIG }}
+          make -j2 O=out ARCH=arm64 \
+            CC=$GITHUB_WORKSPACE/clang/bin/clang \
+            CLANG_TRIPLE=aarch64-linux-gnu- \
+            CROSS_COMPILE=$GITHUB_WORKSPACE/gcc/bin/aarch64-linux-android- \
+            CONFIG_LTO_NONE=y
+
+      - name: Package kernel
+        run: |
+          git clone --depth=1 https://github.com/osm0sis/AnyKernel3 -b master AnyKernel3
+          rm -rf AnyKernel3/.git AnyKernel3/.github AnyKernel3/LICENSE AnyKernel3/README.md
+          if [ -f out/arch/arm64/boot/Image.gz-dtb ]; then
+            cp out/arch/arm64/boot/Image.gz-dtb AnyKernel3/
+          elif [ -f out/arch/arm64/boot/Image.gz ]; then
+            cp out/arch/arm64/boot/Image.gz AnyKernel3/
+          fi
+
+      - name: Upload kernel to artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: output_kernel
+          path: AnyKernel3/*          cd kernel-source
           sed -i '/CONFIG_CC_STACKPROTECTOR_STRONG/d' arch/arm64/configs/${{ env.KERNEL_CONFIG }}
           sed -i '/CONFIG_CC_STACKPROTECTOR/d' arch/arm64/configs/${{ env.KERNEL_CONFIG }}
           echo "CONFIG_CC_STACKPROTECTOR_NONE=y" >> arch/arm64/configs/${{ env.KERNEL_CONFIG }}
